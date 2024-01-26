@@ -1,0 +1,326 @@
+#!/bin/bash
+
+# This script will run a Restic snapshot and remove snapshots according to a retention policy (RESTIC_RETENTION_POLICY)
+# For more information on how to configure a retention policy visit https://restic.readthedocs.io/en/stable/060_forget.html#removing-snapshots-according-to-a-policy
+
+# Restic snapshot settings.
+REPOSITORY_PREFIX="backups" # Restic repository for snapshots.
+RESTIC_RCLONE="rclone:someremote" # Restic rclone settings. (e.g. rclone:somehost -- rclone must be configured first)
+RESTIC_PASSWORD="" # Restic repository password. (keep this safe or your data will be unrecoverable)
+RESTIC_RETENTION_POLICY="--keep-within 7d" # Keep 7 days of snapshots. (both database and directories)
+RESTIC_COMPRESSION="max" # Restic compression.
+LOGS_PATH="/var/log/snapshots" # Logs directory.
+
+# Database backup settings.
+DATABASE_BACKUP=true # Backup MySQL databases. (optional)
+DATABASE_OPTS="--single-transaction --skip-lock-tables" # mysqldump options.
+DATABASE_BACKUP_PATH="/backups/databases" # Database backup path.
+DATABASE_REPOSITORY="databases" # Restic database repository. (uses the same password that is set in RESTIC_PASSWORD)
+
+# Compression settings.
+PIGZ_OPTS="--best" # pigz options.
+
+# Array of directories to backup.
+BACKUP_DIRECTORIES=(
+/etc/nginx
+/sites/dev
+/sites/qa
+/sites/prod
+)
+
+# Binary paths (full path to binary is not required if they are all installed and in your $PATH)
+DATABASE_MYSQLDUMP_PATH="mysqldump" # Path to mysqldump. (probably already in your $PATH or needs to be installed if backing up databases)
+PIGZ_PATH="pigz" # Path to pigz. (probably already in your $PATH or needs to be installed)
+PUSHOVER_PATH="/usr/local/bin/pushover" # Path to Pushover script for notifications (if PUSHOVER_ENABLED is false this is not required)
+RCLONE_PATH="rclone" # Rclone path (probably already in your $PATH or needs to be installed and configured)
+RESTIC_PATH="restic" # Path to restic. (probably already in your $PATH or needs to be installed)
+
+# Pushover notification settings.
+PUSHOVER_ENABLED=true
+PUSHOVER_TITLE="$HOSTNAME - Snapshot Script" # Pushover - Notification title.
+PUSHOVER_MESSAGE_START="Restic snapshot " # Pushover - Notification messages will start with this string, followed by one of the followings:
+PUSHOVER_MESSAGE_STARTED="started." # Pushover - Message will be shown when script starts.
+PUSHOVER_MESSAGE_FINISHED_SUCCESS="finished successfully." # Pushover - Message will be shown if the script ran successfully.
+PUSHOVER_MESSAGE_FINISHED_ERRORS="finished with errors." # Pushover - Message will be shown if the script finished with errors.
+PUSHOVER_MESSAGE_FAIL="failed." # Pushover - Message will be shown if the script has failed.
+PUSHOVER_API_KEY="" # Pushover API key for notifications.
+PUSHOVER_USER_KEY="" # Pushover user key.
+
+# ANSI colors.
+C0='\033[0m' # ANSI - no color
+C1='\033[0;32m' # ANSI - success - green
+C2='\033[1;31m' # ANSI - error - red
+C3='\033[0;36m' # ANSI - information - cyan
+C4='\033[0;33m' # ANSI - variables/paths - orange
+
+# Function definitions.
+helpFunction() {
+    echo -e "\nUsage:"
+    echo -e "  $0 [command]\n"
+    echo -e "Available Commands:\n"
+    echo -e "  config\tConfigure the snapshot script. (safer way to store your password and keys)"
+    echo -e "  init\t\tYou *MUST* run this first to initialize the repositories before snapshots can be created."
+    echo -e "  run\t\tStart the snapshot."
+    echo -e "  list\t\tList snapshots.\n"
+}
+
+checkBinaries() {
+    echo -e "$(dateString) ${C1}Checking for required binaries.${C0}"
+    BINARIES=("${RESTIC_PATH}" "${RCLONE_PATH}" "${DATABASE_MYSQLDUMP_PATH}" "${PIGZ_PATH}" "${PUSHOVER_PATH}")
+    for BINARY in "${BINARIES[@]}"; do
+        echo -ne "$(dateString) ${C0}Checking for ${BINARY}.. "
+        if which ${BINARY} >/dev/null 2>&1; then
+		echo -e "${C1}found. ${C0}($(which ${BINARY}))"
+        else
+            echo -e "${C2}not found. This tool is required for script to function.${C0}"
+	    exit 1
+	fi
+    done
+}
+
+pushover() { if [ -n "${PUSHOVER_API_KEY}" ] && [ -n "${PUSHOVER_USER_KEY}" ] && [ ${PUSHOVER_ENABLED} == true ]; then ${PUSHOVER_PATH} -t ${PUSHOVER_API_KEY} -u ${PUSHOVER_USER_KEY} -T ${PUSHOVER_TITLE} -m "${PUSHOVER_MESSAGE_START}$1 " >/dev/null 2>&1; else echo -e "$(dateString) ${C3}Pushover notifications are not enabled.${C0}"; fi }
+
+lockFile() {
+    if [ -e "${LOCKFILE}" ]; then
+        echo -e "$(dateString) ${C2}Lock file (${C4}${LOCKFILE}${C2}) already exists. Restic snapshot is already running. Exiting.${C0}"
+        exit 1
+    else
+        echo -e "$(dateString) ${C1}Creating lock file. ${C0}(${LOCKFILE})${C0}"
+        exec 99>"${LOCKFILE}"
+        flock -n 99 || { printf "${C2}Restic snapshot is already running. Exiting.${C0}\n"; exit 1; }
+    fi
+}
+
+scriptSettings() {
+    echo -e "$(dateString) ${C1}Script settings:${C0}"
+    echo -e "$(dateString) ${C3}DATABASE_MYSQLDUMP_PATH=${C4}${DATABASE_MYSQLDUMP_PATH}${C0}"
+    echo -e "$(dateString) ${C3}PIGZ_PATH=${C4}${PIGZ_PATH}${C0}"
+    if [ ${PUSHOVER_ENABLED} = true ]; then
+        echo -e "$(dateString) ${C3}PUSHOVER_PATH=${C4}${PUSHOVER_PATH}${C0}"
+    fi
+    echo -e "$(dateString) ${C3}RCLONE_PATH=${C4}${RCLONE_PATH}${C0}"
+    echo -e "$(dateString) ${C3}RESTIC_PATH=${C4}${RESTIC_PATH}${C0}"
+    echo -e "$(dateString) ${C3}LOGS_PATH=${C4}${LOGS_PATH}${C0}"
+    echo -e "$(dateString) ${C3}DATABASE_OPTS=${C4}${DATABASE_OPTS}${C0}"
+    echo -e "$(dateString) ${C3}PIGZ_OPTS=${C4}${PIGZ_OPTS}${C0}"
+    echo -e "$(dateString) ${C3}REPOSITORY_PREFIX=${C4}${REPOSITORY_PREFIX}${C0}"
+    echo -e "$(dateString) ${C3}RESTIC_RCLONE=${C4}${RESTIC_RCLONE}${C0}"
+    echo -e "$(dateString) ${C3}RESTIC_RETENTION_POLICY=${C4}${RESTIC_RETENTION_POLICY}${C0}"
+    echo -e "$(dateString) ${C3}RESTIC_COMPRESSION=${C4}${RESTIC_COMPRESSION}${C0}"
+    echo -e "$(dateString) ${C3}DATABASE_BACKUP=${C4}${DATABASE_BACKUP}${C0}"
+    echo -e "$(dateString) ${C3}DATABASE_BACKUP_PATH=${C4}${DATABASE_BACKUP_PATH}${C0}"
+    echo -e "$(dateString) ${C3}DATABASE_REPOSITORY=${C4}${DATABASE_REPOSITORY}${C0}"
+    echo -e "$(dateString) ${C3}BACKUP_DIRECTORIES=${C4}${BACKUP_DIRECTORIES[*]}${C0}"
+    if [ ${PUSHOVER_ENABLED} = true ]; then
+        echo -e "$(dateString) ${C3}PUSHOVER_ENABLED=${C4}${PUSHOVER_ENABLED}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_TITLE=${C4}${PUSHOVER_TITLE}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_START=${C4}${PUSHOVER_MESSAGE_START}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_STARTED=${C4}${PUSHOVER_MESSAGE_STARTED}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FINISHED_SUCCESS=${C4}${PUSHOVER_MESSAGE_FINISHED_SUCCESS}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FINISHED_ERRORS=${C4}${PUSHOVER_MESSAGE_FINISHED_ERRORS}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FAIL=${C4}${PUSHOVER_MESSAGE_FAIL}${C0}"
+    fi
+}
+
+startSnapshot() {
+    pushover "${PUSHOVER_MESSAGE_STARTED}"
+}
+
+stopSnapshot() {
+    pushover "${PUSHOVER_MESSAGE_FINISHED_SUCCESS}"
+}
+
+failedSnapshot() {
+    pushover "${PUSHOVER_MESSAGE_FAIL}"
+}
+
+initializeRepositories() {
+    if [ ${DATABASE_BACKUP} = true ]; then
+        echo -e "$(dateString) ${C1}Initializing Restic repositories.${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" init
+        if [ $? -eq 0 ]; then
+            echo -e "$(dateString) ${C1}Initialized Restic database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        else
+            echo -e "$(dateString) ${C3}Restic database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C3} already exists.${C0}"
+        fi
+    fi
+    for DIR in ${BACKUP_DIRECTORIES[@]}; do
+        REPOSITORY=$(basename ${DIR})
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" init
+        if [ $? -eq 0 ]; then
+            echo -e "$(dateString) ${C1}Initialized Restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} for ${C4}${DIR}${C3}.${C0}"
+        else
+            echo -e "$(dateString) ${C3}Restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} for ${C4}${DIR}${C3} already exists.${C0}"
+        fi
+    done
+    echo -e "$(dateString) ${C1}Finished initializing Restic repositories.${C0}"
+}
+
+listSnapshot() {
+    if [ ${DATABASE_BACKUP} = true ]; then
+        echo -e "$(dateString) ${C1}Listing Restic database snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+	RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" snapshots
+        if [ $? -ne 0 ]; then
+            echo -e "$(dateString) ${C2}Listing Restic database snapshots failed!${C0}"
+	fi
+    fi
+    for DIR in ${BACKUP_DIRECTORIES[@]}; do
+        REPOSITORY=$(basename ${DIR})
+        echo -e "$(dateString) ${C1}Listing Restic snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" snapshots
+        if [ $? -ne 0 ]; then
+            echo -e "$(dateString) ${C2}Listing Restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C2} for ${C4}${DIR}${C2} failed!${C0}"
+	fi
+    done
+}
+
+runSnapshot() {
+    startSnapshot
+    if [ ${DATABASE_BACKUP} = true ]; then
+        mkdir -p ${DATABASE_BACKUP_PATH}
+        echo -e "$(dateString) ${C1}Backing up MySQL databases.${C0}"
+        DATABASES=( $(mysql -BNe "SHOW DATABASES") );
+        for DATABASE in ${DATABASES[@]}; do
+            DB_FILENAME="$DATABASE-$(date +%FT%H%M).sql.gz"
+            echo -e "$(dateString) ${C1}Backing up database: ${C4}${DATABASE}${C3} (${C4}${DB_FILENAME}${C3})${C0}"
+            $DATABASE_MYSQLDUMP_PATH $DATABASE_OPTS ${DATABASE} | $PIGZ_PATH $PIGZ_OPTS > "${DATABASE_BACKUP_PATH}/${DB_FILENAME}"
+            DATABASES_BACKUP+=("${DB_FILENAME}")
+        done
+        if [ $? -eq 0 ]; then
+            echo -e "$(dateString) ${C1}MySQL database backups generated successfully.${C0}"
+        else
+            echo -e "$(dateString) ${C2}MySQL database backup failed!${C0}"
+            for DATABASE_BACKUP in ${DATABASES_BACKUP[@]}; do rm "${DATABASE_BACKUP_PATH}/${DATABASE_BACKUP}"; done
+            failedSnapshot
+            exit 1
+        fi
+    RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" backup --verbose --exclude-if-present .resticignore ${DATABASE_BACKUP_PATH}
+    fi
+    for DIR in ${BACKUP_DIRECTORIES[@]}; do
+        REPOSITORY=$(basename ${DIR})
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" backup --verbose --exclude-if-present .resticignore ${DIR}
+        if [ $? -eq 1 ]; then
+            if [ ${DATABASE_BACKUP} = true ]; then
+                for DATABASE_BACKUP in ${DATABASES_BACKUP[@]}; do rm "${DATABASE_BACKUP_PATH}/${DATABASE_BACKUP}"; done
+            fi
+	    echo -e "$(dateString) ${C2}Fatal error detected!${C0}"
+            failedSnapshot
+	    echo -e "$(dateString) ${C3}Cleaning up lock file and exiting.${C0}"
+            rm -f ${LOCKFILE}
+            exit 1
+        fi
+    done
+    if [ ${DATABASE_BACKUP} = true ]; then
+       for DATABASE_BACKUP in ${DATABASES_BACKUP[@]}; do rm "${DATABASE_BACKUP_PATH}/${DATABASE_BACKUP}"; done
+    fi
+}
+
+pruneOld() {
+    if [ ${DATABASE_BACKUP} = true ]; then
+        echo -e "$(dateString) ${C3}Prune old database snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" forget --verbose --prune ${RESTIC_RETENTION_POLICY}
+        echo -e "$(dateString) ${C3}Checking database snapshot repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" check --verbose
+    fi
+    for DIR in ${BACKUP_DIRECTORIES[@]}; do
+        REPOSITORY=$(basename ${DIR})
+	echo -e "$(dateString) ${C3}Prune old snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" forget --verbose --prune ${RESTIC_RETENTION_POLICY}
+	echo -e "$(dateString) ${C3}Checking repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" check --verbose
+    done
+}
+
+dateString() {
+    date +%Y-%m-%d\ %H:%M:%S
+}
+
+# Beginning of the snapshot script.
+SCRIPTNAME=$(basename $0)
+LOCKFILE="/tmp/$SCRIPTNAME.lock"
+if [ "$1" == "config" ]; then
+    mkdir -p $HOME/.config/snapshot
+    if [ -s "$HOME/.config/snapshot/snapshot.conf" ]; then
+        echo -e "$(dateString) ${C3}Snapshot configuration already exists in $HOME/.config/snapshot/snapshot.conf remove the configuration file and rerun if you want to reconfigure the script.${C0}"
+	exit 1
+    fi
+    echo -e "${C1}Configuring Restic snapshot script.${C0}"
+    echo -e "${C3}Restic repository password ${C2}(keep this password safe or you will be unable to access your data)${C0}"
+    read -s -r -p "Password: " RESTIC_REPO_PASSWORD
+    echo -e "\n${C3}Are you going to use Pushover for notifications (y/n)? ${C0}"
+    read -r PUSHOVER_NOTIFICATIONS
+    if [[ ! $PUSHOVER_NOTIFICATIONS =~ ^[Yy]$ ]]; then
+        echo "RESTIC_PASSWORD=$RESTIC_REPO_PASSWORD" > $HOME/.config/snapshot/snapshot.conf
+        echo -e "${C1}Configuration saved to $HOME/.config/snapshot/snapshot.conf${C0}"
+        exit 0
+    else
+	echo -e "${C3}Pushover API key: ${C0}"
+	read -s -r PUSHOVER_API_KEY
+	echo -e "\n${C3}Pushover user key: ${C0}"
+	read -s -r PUSHOVER_USER_KEY
+	echo ""
+    fi
+    echo "RESTIC_PASSWORD=$RESTIC_REPO_PASSWORD" > $HOME/.config/snapshot/snapshot.conf
+    echo "PUSHOVER_API_KEY=$PUSHOVER_API_KEY" >> $HOME/.config/snapshot/snapshot.conf
+    echo "PUSHOVER_USER_KEY=$PUSHOVER_USER_KEY" >> $HOME/.config/snapshot/snapshot.conf
+    echo -e "${C1}Configuration saved to $HOME/.config/snapshot/snapshot.conf${C0}"
+    exit 0
+fi
+if [ ! -z "$1" ]; then
+    # Create logs path and log files.
+    START_TIMESTAMP=$(date +%s)
+    mkdir -p ${LOGS_PATH}
+    LOG_FILE="${LOGS_PATH}/$(date +%Y-%m-%d-%H-%M-%S).log"
+    touch ${LOG_FILE}
+    echo -e "$(dateString) ${C1}Restic Snapshot Script${C0}"
+    # Create lock file to prevent multiple instances from running.
+    lockFile
+    if [ -s "$HOME/.config/snapshot/snapshot.conf" ]; then
+        echo -e "$(dateString) ${C3}Reading variables from snapshot configuration file. ($HOME/.config/snapshot/snapshot.conf)${C0}"
+        source $HOME/.config/snapshot/snapshot.conf
+    fi
+    # Print script settings.
+    scriptSettings | tee -a ${LOG_FILE}
+    # Check that all required tools are installed.
+    checkBinaries
+fi
+if [ "$1" == "init" ]; then
+    # Initialize Restic repositories.
+    echo -e "$(dateString) ${C1}Restic repositories creation started.${C0}" | tee -a ${LOG_FILE}
+    initializeRepositories | tee -a ${LOG_FILE}
+
+    # Clean up lock file.
+    rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
+
+    delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
+    echo -e "$(dateString) ${C1}Finished Restic repository creation in ${delta}.${C0}" | tee -a ${LOG_FILE}
+elif [ "$1" == "list" ]; then
+    # List Restic snapshots.
+    echo -e "$(dateString) ${C1}Listing Restic snapshots started.${C0}" | tee -a ${LOG_FILE}
+    listSnapshot | tee -a ${LOG_FILE}
+
+    # Clean up lock file.
+    rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
+
+    delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
+    echo -e "$(dateString) ${C1}Finished listing Restic snapshots in ${delta}.${C0}" | tee -a ${LOG_FILE}
+elif [ "$1" == "run" ]; then
+    # Run the snapshot.
+    echo -e "$(dateString) ${C3}Restic snapshot script started.${C0}" | tee -a ${LOG_FILE}
+    runSnapshot | tee -a ${LOG_FILE}
+
+    # Prune old snapshots.
+    pruneOld | tee -a ${LOG_FILE}
+
+    # Clean up lock file.
+    rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
+
+    delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
+    echo -e "$(dateString) ${C1}Restic snapshot script finished in ${delta}.${C0}" | tee -a ${LOG_FILE}
+
+    # Send snapshot completion notification.
+    stopSnapshot
+else
+    helpFunction
+    exit 1
+fi
