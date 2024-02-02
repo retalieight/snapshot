@@ -1,7 +1,19 @@
 #!/bin/bash
 
-# This script will run a Restic snapshot and remove snapshots according to a retention policy (RESTIC_RETENTION_POLICY)
-# For more information on how to configure a retention policy visit https://restic.readthedocs.io/en/stable/060_forget.html#removing-snapshots-according-to-a-policy
+# This script will run Restic snapshots and remove snapshots according to a retention policy. (RESTIC_RETENTION_POLICY)
+#
+# Setup:
+# Install rclone and configure an rclone remote.
+# Modify RESTIC_RCLONE.
+# Configure a RESTIC_PASSWORD.
+# Configure retention policy.
+# Configure BACKUP_DIRECTORIES.
+# Change any other settings as needed (database backups, pushover settings, etc.)
+# Run this script with "init" to initiliaze Restic respositories.
+# Run this script with "run" to run a snapshot.
+# If everything is working then schedule it as a cronjob.
+#
+# For more information on how to configure a retention policy visit: https://restic.readthedocs.io/en/stable/060_forget.html#removing-snapshots-according-to-a-policy
 
 # Restic snapshot settings.
 REPOSITORY_PREFIX="backups" # Restic repository for snapshots.
@@ -23,9 +35,7 @@ PIGZ_OPTS="--best" # pigz options.
 # Array of directories to backup.
 BACKUP_DIRECTORIES=(
 /etc/nginx
-/sites/dev
-/sites/qa
-/sites/prod
+/var/www/html
 )
 
 # Binary paths (full path to binary is not required if they are all installed and in your $PATH)
@@ -60,8 +70,10 @@ helpFunction() {
     echo -e "Available Commands:\n"
     echo -e "  config\tConfigure the snapshot script. (safer way to store your password and keys)"
     echo -e "  init\t\tYou *MUST* run this first to initialize the repositories before snapshots can be created."
+    echo -e "  list\t\tList snapshots."
+    echo -e "  prune\t\tPrune old snapshots."
     echo -e "  run\t\tStart the snapshot."
-    echo -e "  list\t\tList snapshots.\n"
+    echo -e "  unlock\tUnlock snapshots.\n"
 }
 
 checkBinaries() {
@@ -215,11 +227,27 @@ runSnapshot() {
     fi
 }
 
+unlock() {
+    if [ ${DATABASE_BACKUP} = true ]; then
+        echo -e "$(dateString) ${C3}Unlocking database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" unlock --verbose
+        echo -e "$(dateString) ${C3}Checking database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" check --verbose
+    fi
+    for DIR in ${BACKUP_DIRECTORIES[@]}; do
+        REPOSITORY=$(basename ${DIR})
+	echo -e "$(dateString) ${C3}Unlocking repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" unlock --verbose
+	echo -e "$(dateString) ${C3}Checking repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" check --verbose
+    done
+}
+
 pruneOld() {
     if [ ${DATABASE_BACKUP} = true ]; then
         echo -e "$(dateString) ${C3}Prune old database snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" forget --verbose --prune ${RESTIC_RETENTION_POLICY}
-        echo -e "$(dateString) ${C3}Checking database snapshot repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        echo -e "$(dateString) ${C3}Checking database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" check --verbose
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
@@ -325,6 +353,30 @@ elif [ "$1" == "run" ]; then
 
     # Send snapshot completion notification.
     stopSnapshot
+elif [ "$1" == "prune" ]; then
+    # Prune Restic snapshots.
+    echo -e "$(dateString) ${C1}Pruning Restic snapshots started.${C0}" | tee -a ${LOG_FILE}
+
+    # Prune old snapshots.
+    pruneOld | tee -a ${LOG_FILE}
+
+    # Clean up lock file.
+    rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
+
+    delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
+    echo -e "$(dateString) ${C1}Finished pruning Restic snapshots in ${delta}.${C0}" | tee -a ${LOG_FILE}
+elif [ "$1" == "unlock" ]; then
+    # Unlock Restic snapshots.
+    echo -e "$(dateString) ${C1}Unlocking Restic snapshots started.${C0}" | tee -a ${LOG_FILE}
+
+    # Prune old snapshots.
+    unlock | tee -a ${LOG_FILE}
+
+    # Clean up lock file.
+    rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
+
+    delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
+    echo -e "$(dateString) ${C1}Finished unlocking Restic snapshots in ${delta}.${C0}" | tee -a ${LOG_FILE}
 else
     helpFunction
     exit 1
