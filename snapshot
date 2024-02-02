@@ -272,17 +272,22 @@ if [ ! -z "$1" ]; then
     mkdir -p ${LOGS_PATH}
     LOG_FILE="${LOGS_PATH}/$(date +%Y-%m-%d-%H-%M-%S).log"
     touch ${LOG_FILE}
+
     echo -e "$(dateString) ${C1}Restic Snapshot Script${C0}"
+
     # Create lock file to prevent multiple instances from running.
     lockFile
+
     if [ -s "$HOME/.config/snapshot/snapshot.conf" ]; then
         echo -e "$(dateString) ${C3}Reading variables from snapshot configuration file. ($HOME/.config/snapshot/snapshot.conf)${C0}"
         source $HOME/.config/snapshot/snapshot.conf
     fi
+
     # Print script settings.
     scriptSettings | tee -a ${LOG_FILE}
+
     # Check that all required tools are installed.
-    checkBinaries
+    checkBinaries | tee -a ${LOG_FILE}
 fi
 if [ "$1" == "init" ]; then
     # Initialize Restic repositories.
