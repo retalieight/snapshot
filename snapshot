@@ -77,10 +77,10 @@ helpFunction() {
 }
 
 checkBinaries() {
-    echo -e "$(dateString) ${C1}Checking for required binaries.${C0}"
+    echo -e "$(dateString) ${C3}Checking for required binaries.${C0}"
     BINARIES=("${RESTIC_PATH}" "${RCLONE_PATH}" "${DATABASE_MYSQLDUMP_PATH}" "${PIGZ_PATH}" "${PUSHOVER_PATH}")
     for BINARY in "${BINARIES[@]}"; do
-        echo -ne "$(dateString) ${C0}Checking for ${BINARY}.. "
+        echo -ne "$(dateString) ${C3}Checking for ${C4}${BINARY}${C0}.. "
         if which ${BINARY} >/dev/null 2>&1; then
 		echo -e "${C1}found. ${C0}($(which ${BINARY}))"
         else
@@ -88,50 +88,52 @@ checkBinaries() {
 	    exit 1
 	fi
     done
+    echo ""
 }
 
 pushover() { if [ -n "${PUSHOVER_API_KEY}" ] && [ -n "${PUSHOVER_USER_KEY}" ] && [ ${PUSHOVER_ENABLED} == true ]; then ${PUSHOVER_PATH} -t ${PUSHOVER_API_KEY} -u ${PUSHOVER_USER_KEY} -T ${PUSHOVER_TITLE} -m "${PUSHOVER_MESSAGE_START}$1 " >/dev/null 2>&1; else echo -e "$(dateString) ${C3}Pushover notifications are not enabled.${C0}"; fi }
 
 lockFile() {
     if [ -e "${LOCKFILE}" ]; then
-        echo -e "$(dateString) ${C2}Lock file (${C4}${LOCKFILE}${C2}) already exists. Restic snapshot is already running. Exiting.${C0}"
+        echo -e "$(dateString) ${C2}Lock file (${C4}${LOCKFILE}${C2}) already exists. restic snapshot is already running. Exiting.${C0}"
         exit 1
     else
-        echo -e "$(dateString) ${C1}Creating lock file. ${C0}(${LOCKFILE})${C0}"
+        echo -e "$(dateString) ${C3}Creating lock file.${C0} (${LOCKFILE})"
         exec 99>"${LOCKFILE}"
-        flock -n 99 || { printf "${C2}Restic snapshot is already running. Exiting.${C0}\n"; exit 1; }
+        flock -n 99 || { printf "${C2}restic snapshot is already running. Exiting.${C0}\n"; exit 1; }
     fi
 }
 
 scriptSettings() {
-    echo -e "$(dateString) ${C1}Script settings:${C0}"
-    echo -e "$(dateString) ${C3}DATABASE_MYSQLDUMP_PATH=${C4}${DATABASE_MYSQLDUMP_PATH}${C0}"
-    echo -e "$(dateString) ${C3}PIGZ_PATH=${C4}${PIGZ_PATH}${C0}"
+    echo -e "\n$(dateString) ${C1}Script settings:${C0}"
+    echo -e "$(dateString) ${C3}DATABASE_MYSQLDUMP_PATH=${C0}${DATABASE_MYSQLDUMP_PATH}"
+    echo -e "$(dateString) ${C3}PIGZ_PATH=${C0}${PIGZ_PATH}"
     if [ ${PUSHOVER_ENABLED} = true ]; then
-        echo -e "$(dateString) ${C3}PUSHOVER_PATH=${C4}${PUSHOVER_PATH}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_PATH=${C0}${PUSHOVER_PATH}"
     fi
-    echo -e "$(dateString) ${C3}RCLONE_PATH=${C4}${RCLONE_PATH}${C0}"
-    echo -e "$(dateString) ${C3}RESTIC_PATH=${C4}${RESTIC_PATH}${C0}"
-    echo -e "$(dateString) ${C3}LOGS_PATH=${C4}${LOGS_PATH}${C0}"
-    echo -e "$(dateString) ${C3}DATABASE_OPTS=${C4}${DATABASE_OPTS}${C0}"
-    echo -e "$(dateString) ${C3}PIGZ_OPTS=${C4}${PIGZ_OPTS}${C0}"
-    echo -e "$(dateString) ${C3}REPOSITORY_PREFIX=${C4}${REPOSITORY_PREFIX}${C0}"
-    echo -e "$(dateString) ${C3}RESTIC_RCLONE=${C4}${RESTIC_RCLONE}${C0}"
-    echo -e "$(dateString) ${C3}RESTIC_RETENTION_POLICY=${C4}${RESTIC_RETENTION_POLICY}${C0}"
-    echo -e "$(dateString) ${C3}RESTIC_COMPRESSION=${C4}${RESTIC_COMPRESSION}${C0}"
-    echo -e "$(dateString) ${C3}DATABASE_BACKUP=${C4}${DATABASE_BACKUP}${C0}"
-    echo -e "$(dateString) ${C3}DATABASE_BACKUP_PATH=${C4}${DATABASE_BACKUP_PATH}${C0}"
-    echo -e "$(dateString) ${C3}DATABASE_REPOSITORY=${C4}${DATABASE_REPOSITORY}${C0}"
-    echo -e "$(dateString) ${C3}BACKUP_DIRECTORIES=${C4}${BACKUP_DIRECTORIES[*]}${C0}"
+    echo -e "$(dateString) ${C3}RCLONE_PATH=${C0}${RCLONE_PATH}"
+    echo -e "$(dateString) ${C3}RESTIC_PATH=${C0}${RESTIC_PATH}"
+    echo -e "$(dateString) ${C3}LOGS_PATH=${C0}${LOGS_PATH}"
+    echo -e "$(dateString) ${C3}DATABASE_OPTS=${C0}${DATABASE_OPTS}"
+    echo -e "$(dateString) ${C3}PIGZ_OPTS=${C0}${PIGZ_OPTS}"
+    echo -e "$(dateString) ${C3}REPOSITORY_PREFIX=${C0}${REPOSITORY_PREFIX}"
+    echo -e "$(dateString) ${C3}RESTIC_RCLONE=${C0}${RESTIC_RCLONE}"
+    echo -e "$(dateString) ${C3}RESTIC_RETENTION_POLICY=${C0}${RESTIC_RETENTION_POLICY}"
+    echo -e "$(dateString) ${C3}RESTIC_COMPRESSION=${C0}${RESTIC_COMPRESSION}"
+    echo -e "$(dateString) ${C3}DATABASE_BACKUP=${C0}${DATABASE_BACKUP}"
+    echo -e "$(dateString) ${C3}DATABASE_BACKUP_PATH=${C0}${DATABASE_BACKUP_PATH}"
+    echo -e "$(dateString) ${C3}DATABASE_REPOSITORY=${C0}${DATABASE_REPOSITORY}"
+    echo -e "$(dateString) ${C3}BACKUP_DIRECTORIES=${C0}${BACKUP_DIRECTORIES[*]}"
     if [ ${PUSHOVER_ENABLED} = true ]; then
-        echo -e "$(dateString) ${C3}PUSHOVER_ENABLED=${C4}${PUSHOVER_ENABLED}${C0}"
-        echo -e "$(dateString) ${C3}PUSHOVER_TITLE=${C4}${PUSHOVER_TITLE}${C0}"
-        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_START=${C4}${PUSHOVER_MESSAGE_START}${C0}"
-        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_STARTED=${C4}${PUSHOVER_MESSAGE_STARTED}${C0}"
-        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FINISHED_SUCCESS=${C4}${PUSHOVER_MESSAGE_FINISHED_SUCCESS}${C0}"
-        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FINISHED_ERRORS=${C4}${PUSHOVER_MESSAGE_FINISHED_ERRORS}${C0}"
-        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FAIL=${C4}${PUSHOVER_MESSAGE_FAIL}${C0}"
+        echo -e "$(dateString) ${C3}PUSHOVER_ENABLED=${C0}${PUSHOVER_ENABLED}"
+        echo -e "$(dateString) ${C3}PUSHOVER_TITLE=${C0}${PUSHOVER_TITLE}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_START=${C0}${PUSHOVER_MESSAGE_START}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_STARTED=${C0}${PUSHOVER_MESSAGE_STARTED}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FINISHED_SUCCESS=${C0}${PUSHOVER_MESSAGE_FINISHED_SUCCESS}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FINISHED_ERRORS=${C0}${PUSHOVER_MESSAGE_FINISHED_ERRORS}"
+        echo -e "$(dateString) ${C3}PUSHOVER_MESSAGE_FAIL=${C0}${PUSHOVER_MESSAGE_FAIL}"
     fi
+    echo ""
 }
 
 startSnapshot() {
@@ -147,41 +149,41 @@ failedSnapshot() {
 }
 
 initializeRepositories() {
+    echo -e "$(dateString) ${C3}Initializing restic repositories.${C0}"
     if [ ${DATABASE_BACKUP} = true ]; then
-        echo -e "$(dateString) ${C1}Initializing Restic repositories.${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" init
         if [ $? -eq 0 ]; then
-            echo -e "$(dateString) ${C1}Initialized Restic database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+            echo -e "$(dateString) ${C1}Initialized restic database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
         else
-            echo -e "$(dateString) ${C3}Restic database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C3} already exists.${C0}"
+            echo -e "$(dateString) ${C2}restic database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C2} already exists.${C0}"
         fi
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
         REPOSITORY=$(basename ${DIR})
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" init
         if [ $? -eq 0 ]; then
-            echo -e "$(dateString) ${C1}Initialized Restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} for ${C4}${DIR}${C3}.${C0}"
+            echo -e "$(dateString) ${C1}Initialized restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} for ${C4}${DIR}${C3}.${C0}"
         else
-            echo -e "$(dateString) ${C3}Restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} for ${C4}${DIR}${C3} already exists.${C0}"
+            echo -e "$(dateString) ${C2}restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C2} for ${C4}${DIR}${C2} already exists.${C0}"
         fi
     done
-    echo -e "$(dateString) ${C1}Finished initializing Restic repositories.${C0}"
+    echo -e "$(dateString) ${C1}Finished initializing restic repositories.${C0}"
 }
 
 listSnapshot() {
     if [ ${DATABASE_BACKUP} = true ]; then
-        echo -e "$(dateString) ${C1}Listing Restic database snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+        echo -e "$(dateString) ${C3}Listing restic database snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
 	RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" snapshots
         if [ $? -ne 0 ]; then
-            echo -e "$(dateString) ${C2}Listing Restic database snapshots failed!${C0}"
+            echo -e "$(dateString) ${C2}Listing restic database snapshots failed!${C0}"
 	fi
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
         REPOSITORY=$(basename ${DIR})
-        echo -e "$(dateString) ${C1}Listing Restic snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        echo -e "$(dateString) ${C3}Listing restic snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" snapshots
         if [ $? -ne 0 ]; then
-            echo -e "$(dateString) ${C2}Listing Restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C2} for ${C4}${DIR}${C2} failed!${C0}"
+            echo -e "$(dateString) ${C2}Listing restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C2} for ${C4}${DIR}${C2} failed!${C0}"
 	fi
     done
 }
@@ -190,11 +192,11 @@ runSnapshot() {
     startSnapshot
     if [ ${DATABASE_BACKUP} = true ]; then
         mkdir -p ${DATABASE_BACKUP_PATH}
-        echo -e "$(dateString) ${C1}Backing up MySQL databases.${C0}"
+        echo -e "$(dateString) ${C3}Backing up MySQL databases using mysqldump.${C0}"
         DATABASES=( $(mysql -BNe "SHOW DATABASES") );
         for DATABASE in ${DATABASES[@]}; do
             DB_FILENAME="$DATABASE-$(date +%FT%H%M).sql.gz"
-            echo -e "$(dateString) ${C1}Backing up database: ${C4}${DATABASE}${C3} (${C4}${DB_FILENAME}${C3})${C0}"
+            echo -e "$(dateString) ${C3}Backing up database: ${C4}${DATABASE}${C0} (${DB_FILENAME})"
             $DATABASE_MYSQLDUMP_PATH $DATABASE_OPTS ${DATABASE} | $PIGZ_PATH $PIGZ_OPTS > "${DATABASE_BACKUP_PATH}/${DB_FILENAME}"
             DATABASES_BACKUP+=("${DB_FILENAME}")
         done
@@ -206,10 +208,23 @@ runSnapshot() {
             failedSnapshot
             exit 1
         fi
-    RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" backup --verbose --exclude-if-present .resticignore ${DATABASE_BACKUP_PATH}
+        echo -e "$(dateString) ${C3}Backing up MySQL databases to ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C3} using restic.${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" backup --verbose --exclude-if-present .resticignore ${DATABASE_BACKUP_PATH}
+        if [ $? -eq 1 ]; then
+            if [ ${DATABASE_BACKUP} = true ]; then
+                for DATABASE_BACKUP in ${DATABASES_BACKUP[@]}; do rm "${DATABASE_BACKUP_PATH}/${DATABASE_BACKUP}"; done
+            fi
+  	    echo -e "$(dateString) ${C2}Fatal error detected!${C0}"
+            failedSnapshot
+            echo -e "$(dateString) ${C2}Cleaning up lock file and exiting.${C0}"
+            rm -f ${LOCKFILE}
+            exit 1
+        fi
     fi
+    echo -e "$(dateString) ${C1}Backup of MySQL databases completed successfully.${C0}"
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
         REPOSITORY=$(basename ${DIR})
+	echo -e "$(dateString) ${C3}Backing up directory (${C4}${DIR}${C3}) to ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} using restic.${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" backup --verbose --exclude-if-present .resticignore ${DIR}
         if [ $? -eq 1 ]; then
             if [ ${DATABASE_BACKUP} = true ]; then
@@ -217,10 +232,11 @@ runSnapshot() {
             fi
 	    echo -e "$(dateString) ${C2}Fatal error detected!${C0}"
             failedSnapshot
-	    echo -e "$(dateString) ${C3}Cleaning up lock file and exiting.${C0}"
+	    echo -e "$(dateString) ${C2}Cleaning up lock file and exiting.${C0}"
             rm -f ${LOCKFILE}
             exit 1
         fi
+        echo -e "$(dateString) ${C1}Backup of directory (${C4}${DIR}${C1}) completed successfully.${C0}"
     done
     if [ ${DATABASE_BACKUP} = true ]; then
        for DATABASE_BACKUP in ${DATABASES_BACKUP[@]}; do rm "${DATABASE_BACKUP_PATH}/${DATABASE_BACKUP}"; done
@@ -269,11 +285,11 @@ LOCKFILE="/tmp/$SCRIPTNAME.lock"
 if [ "$1" == "config" ]; then
     mkdir -p $HOME/.config/snapshot
     if [ -s "$HOME/.config/snapshot/snapshot.conf" ]; then
-        echo -e "$(dateString) ${C3}Snapshot configuration already exists in $HOME/.config/snapshot/snapshot.conf remove the configuration file and rerun if you want to reconfigure the script.${C0}"
+        echo -e "$(dateString) ${C3}Snapshot configuration already exists in ${C4}$HOME/.config/snapshot/snapshot.conf${C3} remove the configuration file and rerun if you want to reconfigure the script.${C0}"
 	exit 1
     fi
-    echo -e "${C1}Configuring Restic snapshot script.${C0}"
-    echo -e "${C3}Restic repository password ${C2}(keep this password safe or you will be unable to access your data)${C0}"
+    echo -e "${C3}Configuring restic snapshot script.${C0}"
+    echo -e "${C3}restic repository password ${C2}(keep this password safe or you will be unable to access your data)${C0}"
     read -s -r -p "Password: " RESTIC_REPO_PASSWORD
     echo -e "\n${C3}Are you going to use Pushover for notifications (y/n)? ${C0}"
     read -r PUSHOVER_NOTIFICATIONS
@@ -291,7 +307,7 @@ if [ "$1" == "config" ]; then
     echo "RESTIC_PASSWORD=$RESTIC_REPO_PASSWORD" > $HOME/.config/snapshot/snapshot.conf
     echo "PUSHOVER_API_KEY=$PUSHOVER_API_KEY" >> $HOME/.config/snapshot/snapshot.conf
     echo "PUSHOVER_USER_KEY=$PUSHOVER_USER_KEY" >> $HOME/.config/snapshot/snapshot.conf
-    echo -e "${C1}Configuration saved to $HOME/.config/snapshot/snapshot.conf${C0}"
+    echo -e "${C1}Configuration saved to ${C4}$HOME/.config/snapshot/snapshot.conf${C0}"
     exit 0
 fi
 if [ ! -z "$1" ]; then
@@ -301,13 +317,13 @@ if [ ! -z "$1" ]; then
     LOG_FILE="${LOGS_PATH}/$(date +%Y-%m-%d-%H-%M-%S).log"
     touch ${LOG_FILE}
 
-    echo -e "$(dateString) ${C1}Restic Snapshot Script${C0}"
+    echo -e "$(dateString) ${C1}restic snapshot script${C0}"
 
     # Create lock file to prevent multiple instances from running.
     lockFile
 
     if [ -s "$HOME/.config/snapshot/snapshot.conf" ]; then
-        echo -e "$(dateString) ${C3}Reading variables from snapshot configuration file. ($HOME/.config/snapshot/snapshot.conf)${C0}"
+        echo -e "$(dateString) ${C3}Reading variables from snapshot configuration file. (${C4}$HOME/.config/snapshot/snapshot.conf${C3})${C0}"
         source $HOME/.config/snapshot/snapshot.conf
     fi
 
@@ -318,28 +334,25 @@ if [ ! -z "$1" ]; then
     checkBinaries | tee -a ${LOG_FILE}
 fi
 if [ "$1" == "init" ]; then
-    # Initialize Restic repositories.
-    echo -e "$(dateString) ${C1}Restic repositories creation started.${C0}" | tee -a ${LOG_FILE}
+    # Initialize restic repositories.
     initializeRepositories | tee -a ${LOG_FILE}
 
     # Clean up lock file.
     rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
 
     delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
-    echo -e "$(dateString) ${C1}Finished Restic repository creation in ${delta}.${C0}" | tee -a ${LOG_FILE}
+    echo -e "$(dateString) ${C1}Finished restic repository creation in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
 elif [ "$1" == "list" ]; then
-    # List Restic snapshots.
-    echo -e "$(dateString) ${C1}Listing Restic snapshots started.${C0}" | tee -a ${LOG_FILE}
+    # List restic snapshots.
     listSnapshot | tee -a ${LOG_FILE}
 
     # Clean up lock file.
     rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
 
     delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
-    echo -e "$(dateString) ${C1}Finished listing Restic snapshots in ${delta}.${C0}" | tee -a ${LOG_FILE}
+    echo -e "$(dateString) ${C1}Finished listing restic snapshots in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
 elif [ "$1" == "run" ]; then
     # Run the snapshot.
-    echo -e "$(dateString) ${C3}Restic snapshot script started.${C0}" | tee -a ${LOG_FILE}
     runSnapshot | tee -a ${LOG_FILE}
 
     # Prune old snapshots.
@@ -349,14 +362,11 @@ elif [ "$1" == "run" ]; then
     rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
 
     delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
-    echo -e "$(dateString) ${C1}Restic snapshot script finished in ${delta}.${C0}" | tee -a ${LOG_FILE}
+    echo -e "$(dateString) ${C1}restic snapshot script finished in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
 
     # Send snapshot completion notification.
     stopSnapshot
 elif [ "$1" == "prune" ]; then
-    # Prune Restic snapshots.
-    echo -e "$(dateString) ${C1}Pruning Restic snapshots started.${C0}" | tee -a ${LOG_FILE}
-
     # Prune old snapshots.
     pruneOld | tee -a ${LOG_FILE}
 
@@ -364,19 +374,16 @@ elif [ "$1" == "prune" ]; then
     rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
 
     delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
-    echo -e "$(dateString) ${C1}Finished pruning Restic snapshots in ${delta}.${C0}" | tee -a ${LOG_FILE}
+    echo -e "$(dateString) ${C1}Finished pruning restic snapshots in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
 elif [ "$1" == "unlock" ]; then
-    # Unlock Restic snapshots.
-    echo -e "$(dateString) ${C1}Unlocking Restic snapshots started.${C0}" | tee -a ${LOG_FILE}
-
-    # Prune old snapshots.
+    # Unlock snapshots.
     unlock | tee -a ${LOG_FILE}
 
     # Clean up lock file.
     rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
 
     delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
-    echo -e "$(dateString) ${C1}Finished unlocking Restic snapshots in ${delta}.${C0}" | tee -a ${LOG_FILE}
+    echo -e "$(dateString) ${C1}Finished unlocking restic snapshots in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
 else
     helpFunction
     exit 1
