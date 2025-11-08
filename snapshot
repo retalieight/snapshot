@@ -159,7 +159,7 @@ initializeRepositories() {
         fi
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
-        REPOSITORY=$(basename ${DIR})
+        REPOSITORY=${DIR//\//_}
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" init
         if [ $? -eq 0 ]; then
             echo -e "$(dateString) ${C1}Initialized restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} for ${C4}${DIR}${C3}.${C0}"
@@ -179,7 +179,7 @@ listSnapshot() {
 	fi
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
-        REPOSITORY=$(basename ${DIR})
+        REPOSITORY=${DIR//\//_}
         echo -e "$(dateString) ${C3}Listing restic snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" snapshots
         if [ $? -ne 0 ]; then
@@ -223,7 +223,7 @@ runSnapshot() {
     fi
     echo -e "$(dateString) ${C1}Backup of MySQL databases completed successfully.${C0}"
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
-        REPOSITORY=$(basename ${DIR})
+        REPOSITORY=${DIR//\//_}
 	echo -e "$(dateString) ${C3}Backing up directory (${C4}${DIR}${C3}) to ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} using restic.${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" backup --verbose --exclude-if-present .resticignore ${DIR}
         if [ $? -eq 1 ]; then
@@ -243,6 +243,65 @@ runSnapshot() {
     fi
 }
 
+restoreSnapshot() {
+    echo -e -n "${C3}Enter path of the restore directory (e.g. /root/restore): ${C0}"
+    read -r RESTORE_PATH
+    if [ ! -d ${RESTORE_PATH} ]; then
+        mkdir -p ${RESTORE_PATH}
+    fi
+    if [ ${DATABASE_BACKUP} = true ]; then
+        echo -e -n "${C3}Restore a database snapshot (y/n)? ${C0}"
+        read -r RESTORE_DATABASES
+        if [[ ${RESTORE_DATABASES} =~ ^[Yy]$ ]]; then
+            echo -e "$(dateString) ${C3}Listing restic database snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
+            RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" snapshots
+            if [ $? -ne 0 ]; then
+                echo -e "$(dateString) ${C2}Listing restic database snapshots failed!${C0}"
+            fi
+            echo -e -n "${C3}Enter snapshot ID to restore from: ${C0}"
+            read -r SNAPSHOT_ID
+            echo -e "$(dateString) ${C3}Restoring snapshot ${C4}${SNAPSHOT_ID}${C3} of databases to ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C3} using restic.${C0}"
+            RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" restore ${SNAPSHOT_ID} --verbose --target "${RESTORE_PATH}/${REPOSITORY}"
+            if [ $? -ne 0 ]; then
+                echo -e "$(dateString) ${C2}Fatal error detected!${C0}"
+                echo -e "$(dateString) ${C2}Cleaning up lock file and exiting.${C0}"
+                rm -f ${LOCKFILE}
+                exit 1
+            else
+                echo -e "$(dateString) ${C1}Restore of databases from snapshot ID ${SNAPSHOT_ID} completed successfully.${C0}"
+            fi
+        fi
+    fi
+    echo -e -n "${C3}Restore a directory from a snapshot (y/n)? ${C0}"
+    read -r RESTORE_DIRECTORY
+    if [[ ${RESTORE_DIRECTORY} =~ ^[Yy]$ ]]; then
+        echo -e "${C3}Backup directories: ${C0}"
+        for DIR in ${BACKUP_DIRECTORIES[@]}; do
+            echo ${DIR}
+        done
+        echo -e -n "${C3}Enter a directory to restore: ${C0}"
+        read -r RESTORE_DIR
+        REPOSITORY=${RESTORE_DIR//\//_}
+        echo -e "$(dateString) ${C3}Listing restic snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" snapshots
+        if [ $? -ne 0 ]; then
+            echo -e "$(dateString) ${C2}Listing restic repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C2} for ${C4}${DIR}${C2} failed!${C0}"
+        fi
+        echo -e -n "${C3}Enter snapshot ID to restore from: ${C0}"
+        read -r SNAPSHOT_ID
+        echo -e "$(dateString) ${C3}Restoring snapshot (${C4}${SNAPSHOT_ID}${C3}) of directory (${C4}${DIR}${C3}) to ${C4}${RESTORE_PATH}/${REPOSITORY}${C3} using restic.${C0}"
+        RESTIC_PASSWORD=${RESTIC_PASSWORD} RESTIC_COMPRESSION=${RESTIC_COMPRESSION} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" restore ${SNAPSHOT_ID} --verbose --target "${RESTORE_PATH}/${REPOSITORY}"
+        if [ $? -ne 0 ]; then
+            echo -e "$(dateString) ${C2}Fatal error detected!${C0}"
+            echo -e "$(dateString) ${C2}Cleaning up lock file and exiting.${C0}"
+            rm -f ${LOCKFILE}
+            exit 1
+        else
+            echo -e "$(dateString) ${C1}Restore of directory (${C4}${DIR}${C1}) from snapshot ID ${SNAPSHOT_ID} completed successfully.${C0}"
+        fi
+    fi
+}
+
 unlock() {
     if [ ${DATABASE_BACKUP} = true ]; then
         echo -e "$(dateString) ${C3}Unlocking database repository: ${C4}${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}${C0}"
@@ -251,7 +310,7 @@ unlock() {
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" check --verbose
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
-        REPOSITORY=$(basename ${DIR})
+        REPOSITORY=${DIR//\//_}
 	echo -e "$(dateString) ${C3}Unlocking repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" unlock --verbose
 	echo -e "$(dateString) ${C3}Checking repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
@@ -267,7 +326,7 @@ pruneOld() {
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${DATABASE_REPOSITORY}" check --verbose
     fi
     for DIR in ${BACKUP_DIRECTORIES[@]}; do
-        REPOSITORY=$(basename ${DIR})
+        REPOSITORY=${DIR//\//_}
 	echo -e "$(dateString) ${C3}Prune old snapshots from repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
         RESTIC_PASSWORD=${RESTIC_PASSWORD} ${RESTIC_PATH} -r "${RESTIC_RCLONE}:${REPOSITORY_PREFIX}/${REPOSITORY}" forget --verbose --prune ${RESTIC_RETENTION_POLICY}
 	echo -e "$(dateString) ${C3}Checking repository: ${C4}${REPOSITORY_PREFIX}/${REPOSITORY}${C0}"
@@ -375,6 +434,14 @@ elif [ "$1" == "prune" ]; then
 
     delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
     echo -e "$(dateString) ${C1}Finished pruning restic snapshots in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
+elif [ "$1" == "restore" ]; then
+    # Clean up lock file.
+    rm -f ${LOCKFILE} | tee -a ${LOG_FILE}
+
+    restoreSnapshot
+
+    delta=$(date -d@$(($(date +%s) - $START_TIMESTAMP)) -u +%H:%M:%S)
+    echo -e "$(dateString) ${C1}Finished restoring restic snapshots in ${C4}${delta}${C1}.${C0}" | tee -a ${LOG_FILE}
 elif [ "$1" == "unlock" ]; then
     # Unlock snapshots.
     unlock | tee -a ${LOG_FILE}
